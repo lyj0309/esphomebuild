@@ -76,30 +76,21 @@ def download_artifact(url: str, destination: Path) -> None:
             shutil.copyfileobj(response, out)
 
 
-def emit_compile_log(job_id: int) -> bool:
-    """Replay the ESPHome portion of a completed Actions job log."""
+def emit_action_log(job_id: int) -> bool:
+    """Replay the full plain-text log from a completed Actions job."""
     with tempfile.NamedTemporaryFile(prefix="esphome-gh-log-", delete=False) as out:
         log_path = Path(out.name)
     try:
         download_artifact(f"{API}/repos/{REPO}/actions/jobs/{job_id}/logs", log_path)
-        started = False
         emitted = False
-        print("*** GitHub Actions ESPHome compile log ***", flush=True)
+        print("*** GitHub Actions job log ***", flush=True)
         for raw_line in log_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = LOG_TIMESTAMP_RE.sub("", raw_line)
-            line = ANSI_ESCAPE_RE.sub("", line).rstrip()
-            if not started:
-                if "INFO ESPHome " not in line:
-                    continue
-                started = True
-            if line.startswith(("##[group]", "##[endgroup]")):
-                break
-            if line.startswith("##["):
-                continue
+            line = ANSI_ESCAPE_RE.sub("", line)
             print(line, flush=True)
             emitted = True
         if emitted:
-            print("*** end GitHub Actions ESPHome compile log ***", flush=True)
+            print("*** end GitHub Actions job log ***", flush=True)
         return emitted
     finally:
         log_path.unlink(missing_ok=True)
@@ -218,7 +209,7 @@ def remote_compile(config: Path) -> int:
     last_run_state = None
     step_states: dict[int, str] = {}
     build_job_id = None
-    compile_log_emitted = False
+    action_log_emitted = False
     while time.monotonic() < deadline:
         runs = api("GET", f"/repos/{REPO}/actions/runs?event=workflow_dispatch&per_page=20")
         for candidate in runs.get("workflow_runs", []):
@@ -244,20 +235,10 @@ def remote_compile(config: Path) -> int:
                             flush=True,
                         )
                         step_states[step_id] = step_status
-                    if (
-                        step.get("name") == "Compile"
-                        and step.get("status") == "completed"
-                        and build_job_id
-                        and not compile_log_emitted
-                    ):
-                        try:
-                            compile_log_emitted = emit_compile_log(build_job_id)
-                        except (HTTPError, URLError, OSError):
-                            pass
             if status == "completed":
-                if build_job_id and not compile_log_emitted:
+                if build_job_id and not action_log_emitted:
                     try:
-                        compile_log_emitted = emit_compile_log(build_job_id)
+                        action_log_emitted = emit_action_log(build_job_id)
                     except (HTTPError, URLError, OSError) as exc:
                         print(f"WARNING GitHub Actions log unavailable: {exc}", flush=True)
                 if run.get("conclusion") != "success":
