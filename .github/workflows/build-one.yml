@@ -116,10 +116,26 @@ jobs:
           PY
           fi
 
+      - name: Restore ESPHome build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .github-cache/esphome
+            .esphome/build/${{ inputs.device }}
+          key: esphome-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-${{ hashFiles('**/*.yaml', '**/*.yml', 'components/**') }}
+          restore-keys: |
+            esphome-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-
+            esphome-2026.7.4-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Compile
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD:/config" ghcr.io/esphome/esphome:2026.7.4 compile "/config/$DEVICE.yaml"
+          mkdir -p .github-cache/esphome
+          docker run --rm \
+            -v "$PWD:/config" \
+            -v "$PWD/.github-cache/esphome:/cache" \
+            ghcr.io/esphome/esphome:2026.7.4 \
+            compile "/config/$DEVICE.yaml"
 
       - name: Stage firmware artifact
         run: |

@@ -27,6 +27,10 @@ Actions；编译产物返回 Dashboard 后，由 Dashboard 在局域网内执行
 5. 此后在 Dashboard 点击 Build/Install：GitHub Actions 负责编译，固件
    返回 Dashboard，OTA 仍由本机完成。
 
+Workflow 会自动缓存 `/cache` 中的 ESPHome/PlatformIO 工具链和每台设备
+的增量 build 目录。第一次编译用于建立缓存，后续相同设备的编译会直接
+复用；ESPHome 版本、运行架构或配置哈希变化时会使用新的精确缓存键。
+
 下面是更完整的英文说明和可选配置。
 
 This repository is a generic compatibility backend for ESPHome Device Builder's
@@ -133,3 +137,7 @@ it is never included in the firmware artifact.
 - The wrapper deliberately delegates non-`compile` ESPHome commands to the
   original CLI. Receiver-side jobs are compile-only; OTA/install remains on
   the main Dashboard as required by ESPHome Remote Build.
+- GitHub Actions caches both the container's `/cache` directory and the
+  per-device ESPHome build tree. Exact keys include the ESPHome version,
+  runner architecture, device name, and configuration hash; prefix restores
+  still permit incremental rebuilds after configuration edits.
