@@ -105,9 +105,15 @@ jobs:
           (out / 'build' / device).mkdir(parents=True, exist_ok=True)
           (out / 'idedata').mkdir(parents=True, exist_ok=True)
           (out / 'storage').mkdir(parents=True, exist_ok=True)
-          for p in build.rglob('*'):
-              if p.is_file() and ((p.name.startswith('firmware') and p.suffix == '.bin') or p.name in {'bootloader.bin','partition-table.bin','ota_data_initial.bin'}):
-                  dest = out / 'build' / device / p.relative_to(build)
+          # PlatformIO may expose .pioenvs as a symlink. Walk links and stage
+          # the flash images flat so upload-artifact never drops them.
+          import os
+          for parent, dirs, files in os.walk(build, followlinks=True):
+              for name in files:
+                  if not ((name.startswith('firmware') and name.endswith('.bin')) or name in {'bootloader.bin','partition-table.bin','ota_data_initial.bin'}):
+                      continue
+                  p = Path(parent) / name
+                  dest = out / 'build' / device / name
                   dest.parent.mkdir(parents=True, exist_ok=True)
                   shutil.copy2(p, dest)
           idedata = next(build.rglob('idedata.json'), None)
@@ -122,9 +128,7 @@ jobs:
                   if str(p).startswith('/config/'):
                       p = Path(str(p)[len('/config/'):])
                   if p.exists() and p.suffix == '.bin':
-                      dest = out / 'build' / device / p.relative_to(build)
-                      dest.parent.mkdir(parents=True, exist_ok=True)
-                      shutil.copy2(p, dest)
+                      shutil.copy2(p, out / 'build' / device / p.name)
               (out / 'storage' / storage.name).write_text(json.dumps(data, indent=2) + '\n')
           validated = root / 'storage' / f'{device}.yaml.validated.yaml'
           if validated.exists():
