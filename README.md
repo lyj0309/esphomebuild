@@ -140,7 +140,7 @@ it is never included in the firmware artifact.
 ## Development and limitations
 
 - ESPHome and the Device Builder versions should match the Dashboard. The
-  supplied image uses ESPHome `2026.8.2` and Device Builder `1.11.5`.
+  supplied image uses ESPHome `2026.8.2` and the matching Device Builder bundled in the official image.
 - GitHub's workflow input limit bounds the compressed Remote Build bundle.
   Large binary assets may need the optional `config_repo` fallback.
 - The wrapper deliberately delegates non-`compile` ESPHome commands to the
