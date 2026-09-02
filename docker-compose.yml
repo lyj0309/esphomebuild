@@ -1,7 +1,7 @@
 services:
   esphome-github-remote-builder:
     build: .
-    image: esphome-github-remote-builder:2026.7.4
+    image: esphome-github-remote-builder:2026.8.2
     container_name: esphome-github-remote-builder
     network_mode: host
     restart: unless-stopped

@@ -1,4 +1,4 @@
-FROM ghcr.io/esphome/esphome:2026.7.4
+FROM ghcr.io/esphome/esphome:2026.8.2
 
 RUN mv /usr/local/bin/esphome /usr/local/bin/esphome-local \
     && pip install --no-cache-dir esphome-device-builder==1.11.5

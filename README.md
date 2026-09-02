@@ -84,12 +84,12 @@ personal devices and can be called for any valid ESPHome YAML basename.
 Build and run the image on the same LAN as the main Dashboard:
 
 ```sh
-docker build -t esphome-github-remote-builder:2026.7.4 .
+docker build -t esphome-github-remote-builder:2026.8.2 .
 docker run -d --name esphome-github-remote-builder \
   --network host --restart unless-stopped \
   --env-file ./backend.env \
   -v esphome-github-builder-data:/var/lib/esphome-builder \
-  esphome-github-remote-builder:2026.7.4 \
+  esphome-github-remote-builder:2026.8.2 \
   --remote-build-only --remote-build-port 6056 /var/lib/esphome-builder
 ```
 
@@ -140,7 +140,7 @@ it is never included in the firmware artifact.
 ## Development and limitations
 
 - ESPHome and the Device Builder versions should match the Dashboard. The
-  supplied image uses ESPHome `2026.7.4` and Device Builder `1.11.5`.
+  supplied image uses ESPHome `2026.8.2` and Device Builder `1.11.5`.
 - GitHub's workflow input limit bounds the compressed Remote Build bundle.
   Large binary assets may need the optional `config_repo` fallback.
 - The wrapper deliberately delegates non-`compile` ESPHome commands to the
