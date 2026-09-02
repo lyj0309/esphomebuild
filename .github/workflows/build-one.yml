@@ -222,3 +222,7 @@ jobs:
           path: artifact
           if-no-files-found: error
           retention-days: 30
+          # PlatformIO stores ESP8266 firmware under .pioenvs/. The artifact
+          # tree is already allow-listed above, so hidden build directories
+          # are both required and safe to include.
+          include-hidden-files: true
