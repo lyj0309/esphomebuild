@@ -91,10 +91,6 @@ jobs:
         run: |
           set -euo pipefail
           sudo chmod -R a+rX .esphome
-          echo 'Build files:'
-          find .esphome/build/${DEVICE} -type f -printf '%p %s bytes\n' | head -80 || true
-          echo 'StorageJSON:'
-          sed -n '1,80p' .esphome/storage/${DEVICE}.yaml.json || true
           python3 - <<'PY'
           import json, shutil
           from pathlib import Path
@@ -119,6 +115,9 @@ jobs:
           idedata = next(build.rglob('idedata.json'), None)
           if idedata:
               shutil.copy2(idedata, out / 'idedata' / f'{device}.json')
+          platformio = build / 'platformio.ini'
+          if platformio.exists():
+              shutil.copy2(platformio, out / 'build' / device / 'platformio.ini')
           storage = root / 'storage' / f'{device}.yaml.json'
           if storage.exists():
               data = json.loads(storage.read_text())
