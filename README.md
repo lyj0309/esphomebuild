@@ -1,5 +1,34 @@
 # ESPHome GitHub Actions Remote Build Wrapper
 
+## 中文快速开始
+
+这套 wrapper 不需要上传 ESPHome 设备配置仓库。Dashboard 会通过原生
+Remote Build 协议把当前配置 bundle 交给本机容器，容器再触发 GitHub
+Actions；编译产物返回 Dashboard 后，由 Dashboard 在局域网内执行 OTA。
+
+1. Fork 本仓库，创建可触发 workflow、读取 Actions artifacts 的 GitHub
+   token。
+2. 在 fork 的 **Settings → Secrets and variables → Actions** 中创建
+   `ESPHOME_SECRETS_YAML`，内容为本机 `secrets.yaml`。配置 bundle 中的
+   `secrets.yaml` 不会发送给 workflow。
+3. 复制并编辑环境文件，然后启动：
+
+   ```sh
+   cp backend.env.example backend.env
+   chmod 600 backend.env
+   vi backend.env
+   docker compose up -d --build
+   docker compose logs -f
+   ```
+
+4. 从日志记录一次性配对码和指纹。在主 ESPHome Dashboard 打开
+   **Settings → Send builds → Pair with a build server**，填写运行 Docker
+   的主机和端口 `6056`，核对指纹并完成配对。
+5. 此后在 Dashboard 点击 Build/Install：GitHub Actions 负责编译，固件
+   返回 Dashboard，OTA 仍由本机完成。
+
+下面是更完整的英文说明和可选配置。
+
 This repository is a generic compatibility backend for ESPHome Device Builder's
 native **Remote Build** protocol. It lets an ESPHome Dashboard send a build to
 this backend; the backend dispatches a GitHub Actions workflow, waits for the
