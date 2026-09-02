@@ -187,6 +187,9 @@ jobs:
           platformio = build / 'platformio.ini'
           if platformio.exists():
               shutil.copy2(platformio, out / 'build' / device / 'platformio.ini')
+          build_info = build / 'build_info.json'
+          if build_info.exists():
+              shutil.copy2(build_info, out / 'build' / device / 'build_info.json')
           storage = root / 'storage' / f'{device}.yaml.json'
           if storage.exists():
               data = json.loads(storage.read_text())
@@ -213,6 +216,8 @@ jobs:
               raise SystemExit('idedata.json not found')
           if not (out / 'storage' / f'{device}.yaml.json').exists():
               raise SystemExit('StorageJSON not found')
+          if not (out / 'build' / device / 'build_info.json').exists():
+              raise SystemExit('build_info.json not found')
           PY
 
       - name: Upload firmware artifact
