@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -21,6 +22,8 @@ REAL = "/usr/local/bin/esphome-local"
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 WORKFLOW = os.environ.get("GITHUB_WORKFLOW", "build-one.yml")
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+LOG_TIMESTAMP_RE = re.compile(r"^\ufeff?\d{4}-\d{2}-\d{2}T\S+Z ")
 
 
 def api(method: str, path: str, body: dict | None = None):
@@ -71,6 +74,35 @@ def download_artifact(url: str, destination: Path) -> None:
     with response:
         with destination.open("wb") as out:
             shutil.copyfileobj(response, out)
+
+
+def emit_compile_log(job_id: int) -> bool:
+    """Replay the ESPHome portion of a completed Actions job log."""
+    with tempfile.NamedTemporaryFile(prefix="esphome-gh-log-", delete=False) as out:
+        log_path = Path(out.name)
+    try:
+        download_artifact(f"{API}/repos/{REPO}/actions/jobs/{job_id}/logs", log_path)
+        started = False
+        emitted = False
+        print("*** GitHub Actions ESPHome compile log ***", flush=True)
+        for raw_line in log_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            line = LOG_TIMESTAMP_RE.sub("", raw_line)
+            line = ANSI_ESCAPE_RE.sub("", line).rstrip()
+            if not started:
+                if "INFO ESPHome " not in line:
+                    continue
+                started = True
+            if line.startswith(("##[group]", "##[endgroup]")):
+                break
+            if line.startswith("##["):
+                continue
+            print(line, flush=True)
+            emitted = True
+        if emitted:
+            print("*** end GitHub Actions ESPHome compile log ***", flush=True)
+        return emitted
+    finally:
+        log_path.unlink(missing_ok=True)
 
 
 def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
@@ -183,6 +215,10 @@ def remote_compile(config: Path) -> int:
     })
     deadline = time.monotonic() + float(os.environ.get("GITHUB_BUILD_TIMEOUT", "3600"))
     run = None
+    last_run_state = None
+    step_states: dict[int, str] = {}
+    build_job_id = None
+    compile_log_emitted = False
     while time.monotonic() < deadline:
         runs = api("GET", f"/repos/{REPO}/actions/runs?event=workflow_dispatch&per_page=20")
         for candidate in runs.get("workflow_runs", []):
@@ -191,8 +227,39 @@ def remote_compile(config: Path) -> int:
                 break
         if run:
             status = run.get("status")
-            print(f"INFO GitHub Actions run {run['id']}: {status or run.get('conclusion')}", flush=True)
+            run_state = run.get("conclusion") if status == "completed" else status
+            if run_state != last_run_state:
+                print(f"INFO GitHub Actions run {run['id']}: {run_state}", flush=True)
+                last_run_state = run_state
+            jobs = api("GET", f"/repos/{REPO}/actions/runs/{run['id']}/jobs?per_page=10")
+            for job in jobs.get("jobs", []):
+                if job.get("name") == "build":
+                    build_job_id = job.get("id")
+                for step in job.get("steps", []):
+                    step_id = step.get("number")
+                    step_status = step.get("conclusion") or step.get("status")
+                    if step_id is not None and step_status != step_states.get(step_id):
+                        print(
+                            f"INFO GitHub Actions step {step.get('name')}: {step_status}",
+                            flush=True,
+                        )
+                        step_states[step_id] = step_status
+                    if (
+                        step.get("name") == "Compile"
+                        and step.get("status") == "completed"
+                        and build_job_id
+                        and not compile_log_emitted
+                    ):
+                        try:
+                            compile_log_emitted = emit_compile_log(build_job_id)
+                        except (HTTPError, URLError, OSError):
+                            pass
             if status == "completed":
+                if build_job_id and not compile_log_emitted:
+                    try:
+                        compile_log_emitted = emit_compile_log(build_job_id)
+                    except (HTTPError, URLError, OSError) as exc:
+                        print(f"WARNING GitHub Actions log unavailable: {exc}", flush=True)
                 if run.get("conclusion") != "success":
                     print(f"ERROR GitHub Actions concluded {run.get('conclusion')}", flush=True)
                     return 1
