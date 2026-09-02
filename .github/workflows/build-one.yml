@@ -151,6 +151,7 @@ jobs:
             -e PLATFORMIO_BUILD_CACHE_DIR=/cache/platformio/build-cache \
             ghcr.io/esphome/esphome:2026.7.4 \
             compile "/config/$DEVICE.yaml"
+          sudo chmod -R a+rX .github-cache/esphome
 
       - name: Stage firmware artifact
         run: |
