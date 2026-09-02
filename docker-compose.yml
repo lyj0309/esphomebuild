@@ -1,0 +1,19 @@
+services:
+  esphome-github-remote-builder:
+    build: .
+    image: esphome-github-remote-builder:2026.7.4
+    container_name: esphome-github-remote-builder
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - ./backend.env
+    command:
+      - --remote-build-only
+      - --remote-build-port
+      - "6056"
+      - /var/lib/esphome-builder
+    volumes:
+      - esphome-github-builder-data:/var/lib/esphome-builder
+
+volumes:
+  esphome-github-builder-data:

@@ -50,6 +50,16 @@ docker run -d --name esphome-github-remote-builder \
   --remote-build-only --remote-build-port 6056 /var/lib/esphome-builder
 ```
 
+There is also a ready-to-edit `backend.env.example` and
+`docker-compose.yml` in this repository. Copy the example first:
+
+```sh
+cp backend.env.example backend.env
+chmod 600 backend.env
+${EDITOR:-vi} backend.env
+docker compose up -d --build
+```
+
 `backend.env` must be root-readable only and contain at least:
 
 ```dotenv
@@ -59,6 +69,10 @@ GITHUB_WORKFLOW=build-one.yml
 GITHUB_CONFIG_REPOSITORY=OWNER/PRIVATE-ESPHome-CONFIG
 GITHUB_CONFIG_REF=master
 ```
+
+`GITHUB_WORKFLOW_REF` selects the branch of this wrapper repository that owns
+the workflow (normally `master`); `GITHUB_CONFIG_REF` selects the branch of
+the configuration repository.
 
 On first start the container prints a one-time pairing key and fingerprint.
 In the main Dashboard open **Settings → Send builds → Pair with a build
