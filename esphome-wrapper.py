@@ -84,6 +84,8 @@ def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
         if not source_build.exists():
             raise RuntimeError(f"artifact does not contain build/{device}")
         build_dir = data_dir / "build" / device
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
         build_dir.mkdir(parents=True, exist_ok=True)
         for src in source_build.rglob("*"):
             if src.is_file():
@@ -107,13 +109,21 @@ def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
         (idedata_dir / f"{device}.json").write_text(json.dumps(idedata, indent=2) + "\n")
 
         storage = json.loads(storage_src.read_text())
+        original_build = Path(storage.get("build_path", ""))
+        original_firmware_path = Path(storage.get("firmware_bin_path", ""))
         storage["build_path"] = str(build_dir)
-        original_firmware = Path(storage.get("firmware_bin_path", "")).name
-        firmware = (
-            next(build_dir.rglob(original_firmware), None)
-            if original_firmware
-            else None
-        )
+        firmware = None
+        if original_build and original_firmware_path:
+            try:
+                candidate = build_dir / original_firmware_path.relative_to(original_build)
+            except ValueError:
+                pass
+            else:
+                if candidate.is_file():
+                    firmware = candidate
+        original_firmware = original_firmware_path.name
+        if firmware is None and original_firmware:
+            firmware = next(build_dir.rglob(original_firmware), None)
         if firmware is None:
             firmware = next(build_dir.rglob("firmware.bin"), None)
         if firmware is None:
