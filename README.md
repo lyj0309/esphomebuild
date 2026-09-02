@@ -35,6 +35,11 @@ Hosted Runner 的 Docker daemon 不会跨任务保留，因此固定版本镜像
 从 GHCR 拉取。Workflow 不缓存 `docker save` 归档：恢复后再 `docker load`
 通常比直接拉取更慢且占用额外缓存额度；自托管 Runner 则会自然保留镜像。
 
+构建期间，Dashboard 日志会显示 GitHub Actions 的 Run 状态和每个 Step 的
+状态变化。Job 完成后，后端会下载并回放整个 Job 日志，包括 Runner 初始化、
+缓存、ESPHome 编译、产物整理与上传；它不依赖 GitHub 的非公开实时日志接口。
+GitHub 已遮蔽的 secret 在回放日志中仍然保持遮蔽。
+
 下面是更完整的英文说明和可选配置。
 
 This repository is a generic compatibility backend for ESPHome Device Builder's
@@ -150,3 +155,8 @@ it is never included in the firmware artifact.
   pinned image is intentionally pulled from GHCR: restoring a `docker save`
   archive and then loading it is typically slower and consumes cache quota.
   A self-hosted runner naturally keeps the image locally.
+- While a run is active, the backend reports run and step state changes from
+  the supported Actions API. After the job completes, it downloads and replays
+  the complete job log (runner setup, cache, compile, staging, upload, and
+  cleanup) in the Dashboard. It does not rely on an undocumented live-log
+  stream, and secrets masked by GitHub remain masked in the replay.
