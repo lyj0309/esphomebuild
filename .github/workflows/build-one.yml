@@ -178,7 +178,9 @@ jobs:
                   dest = out / 'build' / device / name
                   dest.parent.mkdir(parents=True, exist_ok=True)
                   shutil.copy2(p, dest)
-          idedata = next(build.rglob('idedata.json'), None)
+          idedata = root / 'idedata' / f'{device}.json'
+          if not idedata.exists():
+              idedata = next(build.rglob('idedata.json'), None)
           if idedata:
               shutil.copy2(idedata, out / 'idedata' / f'{device}.json')
           platformio = build / 'platformio.ini'

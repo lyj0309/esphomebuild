@@ -108,9 +108,18 @@ def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
 
         storage = json.loads(storage_src.read_text())
         storage["build_path"] = str(build_dir)
-        firmware = next(build_dir.rglob("firmware.bin"), None)
+        original_firmware = Path(storage.get("firmware_bin_path", "")).name
+        firmware = (
+            next(build_dir.rglob(original_firmware), None)
+            if original_firmware
+            else None
+        )
         if firmware is None:
-            raise RuntimeError("artifact does not contain firmware.bin")
+            firmware = next(build_dir.rglob("firmware.bin"), None)
+        if firmware is None:
+            firmware = next(build_dir.rglob("firmware.ota.bin"), None)
+        if firmware is None:
+            raise RuntimeError("artifact does not contain the OTA firmware image")
         storage["firmware_bin_path"] = str(firmware)
         storage_dir = data_dir / "storage"
         storage_dir.mkdir(parents=True, exist_ok=True)
