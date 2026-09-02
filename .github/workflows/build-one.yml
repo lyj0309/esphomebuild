@@ -133,27 +133,22 @@ jobs:
           PY
           fi
 
-      - name: Restore shared PlatformIO toolchain cache
+      - name: Restore shared ESPHome cache
         uses: actions/cache@v4
         with:
-          path: .github-cache/platformio
-          key: esphome-platformio-2026.7.4-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Restore per-device incremental build cache
-        uses: actions/cache@v4
-        with:
-          path: .esphome/build/${{ inputs.device }}
-          key: esphome-build-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-${{ steps.cache_key.outputs.digest }}
+          path: .github-cache/esphome
+          key: esphome-cache-v2-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache_key.outputs.digest }}
           restore-keys: |
-            esphome-build-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-
+            esphome-cache-v2-2026.7.4-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Compile
         run: |
           set -euo pipefail
-          mkdir -p .github-cache/platformio
+          mkdir -p .github-cache/esphome
           docker run --rm \
             -v "$PWD:/config" \
-            -v "$PWD/.github-cache/platformio:/root/.platformio" \
+            -v "$PWD/.github-cache/esphome:/cache" \
+            -e PLATFORMIO_BUILD_CACHE_DIR=/cache/platformio/build-cache \
             ghcr.io/esphome/esphome:2026.7.4 \
             compile "/config/$DEVICE.yaml"
 

@@ -27,10 +27,10 @@ Actions；编译产物返回 Dashboard 后，由 Dashboard 在局域网内执行
 5. 此后在 Dashboard 点击 Build/Install：GitHub Actions 负责编译，固件
    返回 Dashboard，OTA 仍由本机完成。
 
-Workflow 使用两层缓存：所有设备共享 `/root/.platformio` 中的 PlatformIO
-工具链；每台设备单独缓存自己的增量 build 目录。第一次编译用于建立缓存，
-后续设备可以复用工具链，同一设备还能复用对象文件；ESPHome 版本、运行
-架构或配置摘要变化时会使用相应的新缓存键。
+Workflow 会把 ESPHome 官方镜像的 `/cache` 作为全局共享缓存，其中包括
+PlatformIO 工具链、ESP-IDF ccache，并显式启用 PlatformIO 的内容寻址编译
+缓存。不同设备可安全复用相同工具和相同源码的编译结果。配置摘要仅用于
+给 GitHub 的不可变缓存快照命名，不会为每台设备建立互相隔离的工具链。
 
 下面是更完整的英文说明和可选配置。
 
@@ -138,7 +138,8 @@ it is never included in the firmware artifact.
 - The wrapper deliberately delegates non-`compile` ESPHome commands to the
   original CLI. Receiver-side jobs are compile-only; OTA/install remains on
   the main Dashboard as required by ESPHome Remote Build.
-- GitHub Actions uses two cache layers: one shared PlatformIO/toolchain cache
-  mounted at `/root/.platformio`, plus one incremental ESPHome build tree per
-  device. The shared key includes the ESPHome version and runner architecture;
-  device keys additionally include the device name and configuration digest.
+- GitHub Actions persists the official container's shared `/cache` directory.
+  It contains PlatformIO packages/toolchains and ESP-IDF ccache; the workflow
+  also enables PlatformIO's content-addressed build cache there. Devices safely
+  share matching compiler outputs. A configuration digest names immutable
+  GitHub cache snapshots, but the cache contents are not partitioned by device.
