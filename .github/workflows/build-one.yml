@@ -91,6 +91,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo chmod -R a+rX .esphome
+          echo 'Build files:'
+          find .esphome/build/${DEVICE} -type f -printf '%p %s bytes\n' | head -80 || true
+          echo 'StorageJSON:'
+          sed -n '1,80p' .esphome/storage/${DEVICE}.yaml.json || true
           python3 - <<'PY'
           import json, shutil
           from pathlib import Path
