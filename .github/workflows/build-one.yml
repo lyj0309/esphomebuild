@@ -133,6 +133,28 @@ jobs:
           PY
           fi
 
+      - name: Restore ESPHome Docker image cache
+        id: docker_image_cache
+        uses: actions/cache@v4
+        with:
+          path: .github-cache/docker/esphome-2026.7.4.tar
+          key: esphome-image-v1-2026.7.4-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Load or pull ESPHome Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image='ghcr.io/esphome/esphome:2026.7.4'
+          archive='.github-cache/docker/esphome-2026.7.4.tar'
+          if [[ -s "$archive" ]]; then
+            docker load --input "$archive"
+          else
+            mkdir -p "$(dirname "$archive")"
+            docker pull "$image"
+            docker save --output "$archive" "$image"
+            chmod a+r "$archive"
+          fi
+
       - name: Restore shared ESPHome cache
         uses: actions/cache@v4
         with:

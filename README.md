@@ -31,6 +31,8 @@ Workflow 会把 ESPHome 官方镜像的 `/cache` 作为全局共享缓存，其�
 PlatformIO 工具链、ESP-IDF ccache，并显式启用 PlatformIO 的内容寻址编译
 缓存。不同设备可安全复用相同工具和相同源码的编译结果。配置摘要仅用于
 给 GitHub 的不可变缓存快照命名，不会为每台设备建立互相隔离的工具链。
+GitHub Hosted Runner 每次都是临时虚拟机，因此 Workflow 还会单独缓存固定
+版本的 ESPHome Docker 镜像，并在下一次运行时用 `docker load` 恢复。
 
 下面是更完整的英文说明和可选配置。
 
@@ -143,3 +145,6 @@ it is never included in the firmware artifact.
   also enables PlatformIO's content-addressed build cache there. Devices safely
   share matching compiler outputs. A configuration digest names immutable
   GitHub cache snapshots, but the cache contents are not partitioned by device.
+- GitHub-hosted runners are ephemeral, so their Docker daemon does not survive
+  between jobs. The workflow separately caches the pinned ESPHome image as a
+  Docker archive and loads it before compiling instead of pulling it every run.
