@@ -22,6 +22,11 @@ on:
         required: false
         default: ''
         type: string
+      bundle_b64:
+        description: Base64 tar.gz Remote Build bundle (secrets excluded)
+        required: false
+        default: ''
+        type: string
       request_id:
         description: Correlation id from the wrapper
         required: false
@@ -40,27 +45,56 @@ jobs:
       DEVICE: ${{ inputs.device }}
       ESPHOME_SECRETS_YAML: ${{ secrets.ESPHOME_SECRETS_YAML }}
     steps:
-      - name: Check out configuration
+      - name: Check out optional configuration repository
+        if: ${{ inputs.config_repo != '' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.config_repo || github.repository }}
+          repository: ${{ inputs.config_repo }}
           ref: ${{ inputs.config_ref }}
           token: ${{ secrets.CONFIG_REPO_TOKEN || github.token }}
           path: config-src
 
       - name: Prepare configuration
         shell: bash
-        env:
-          CONFIG_B64: ${{ inputs.config_b64 }}
         run: |
           set -euo pipefail
-          shopt -s dotglob
-          cp -a config-src/. .
-          [[ "$DEVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
-          if [[ -n "${CONFIG_B64:-}" ]]; then
-            printf '%s' "$CONFIG_B64" | base64 --decode > "$DEVICE.yaml"
-          fi
-          test -s "$DEVICE.yaml"
+          python3 - <<'PY'
+          import base64, io, json, os, shutil, tarfile
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          inputs = event.get('inputs', {})
+          device = inputs['device']
+          if not device or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in device):
+              raise SystemExit(f'invalid device name: {device!r}')
+          source = Path('config-src')
+          if source.exists():
+              for item in source.iterdir():
+                  if item.name == '.git':
+                      continue
+                  target = Path(item.name)
+                  if item.is_dir():
+                      shutil.copytree(item, target, dirs_exist_ok=True)
+                  else:
+                      shutil.copy2(item, target)
+
+          encoded_bundle = inputs.get('bundle_b64', '')
+          if encoded_bundle:
+              raw = base64.b64decode(encoded_bundle, validate=True)
+              with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as archive:
+                  root = Path.cwd().resolve()
+                  for member in archive.getmembers():
+                      target = (root / member.name).resolve()
+                      if not str(target).startswith(str(root) + os.sep):
+                          raise SystemExit(f'unsafe bundle path: {member.name}')
+                  archive.extractall('.', filter='data')
+
+          encoded_config = inputs.get('config_b64', '')
+          if encoded_config:
+              Path(f'{device}.yaml').write_bytes(base64.b64decode(encoded_config, validate=True))
+          if not Path(f'{device}.yaml').is_file():
+              raise SystemExit(f'{device}.yaml was not supplied by bundle/config/repository')
+          PY
 
       - name: Prepare secrets
         shell: bash

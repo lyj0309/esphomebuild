@@ -9,6 +9,8 @@ import shutil
 import sys
 import tempfile
 import time
+import tarfile
+import io
 import uuid
 import zipfile
 from pathlib import Path
@@ -118,6 +120,28 @@ def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
             shutil.copy2(validated, storage_dir / validated.name)
 
 
+def encode_config_bundle(config: Path) -> str:
+    """Pack the receiver-extracted Remote Build tree, excluding secrets."""
+    root = config.parent
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root)
+            if any(part in {".git", ".esphome", "__pycache__"} for part in relative.parts):
+                continue
+            if relative.name in {"secrets.yaml", "secrets.yml"}:
+                continue
+            archive.add(path, arcname=relative, recursive=False)
+    encoded = base64.b64encode(buffer.getvalue()).decode()
+    # GitHub caps all workflow_dispatch inputs at 65,535 characters.
+    if len(encoded) > 60_000:
+        raise RuntimeError(
+            "configuration bundle exceeds GitHub workflow_dispatch input limit; "
+            "move large assets to a remote package or optional config repository"
+        )
+    return encoded
+
+
 def remote_compile(config: Path) -> int:
     device = config.stem
     if not device or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in device):
@@ -125,7 +149,7 @@ def remote_compile(config: Path) -> int:
     request_id = f"remote-{device}-{uuid.uuid4().hex[:12]}"
     ref = os.environ.get("GITHUB_CONFIG_REF", "master")
     config_repo = os.environ.get("GITHUB_CONFIG_REPOSITORY", "")
-    encoded = base64.b64encode(config.read_bytes()).decode()
+    bundle_b64 = encode_config_bundle(config)
     print(f"INFO GitHub Actions build requested for {device} ({request_id})", flush=True)
     api("POST", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches", {
         "ref": os.environ.get("GITHUB_WORKFLOW_REF", "master"),
@@ -133,7 +157,8 @@ def remote_compile(config: Path) -> int:
             "device": device,
             "config_ref": ref,
             "config_repo": config_repo,
-            "config_b64": encoded,
+            "config_b64": "",
+            "bundle_b64": bundle_b64,
             "request_id": request_id,
         },
     })

@@ -6,8 +6,8 @@ this backend; the backend dispatches a GitHub Actions workflow, waits for the
 firmware artifact, and returns it to the Dashboard. The Dashboard can then do
 the normal local OTA/install step.
 
-The repository contains no device configuration. Keep YAML files and custom
-components in a separate configuration repository (private is recommended).
+The repository contains no device configuration, and normal use does not
+require a separate configuration repository.
 
 ## How it works
 
@@ -18,9 +18,10 @@ ESPHome Dashboard --Noise Remote Build--> this container
 ESPHome Dashboard --normal OTA/install--> device
 ```
 
-The workflow accepts the current YAML as `config_b64`, so edits made in the
-Dashboard do not need to be committed first. `config_repo` supplies the rest
-of the configuration tree (custom components, packages, and fonts).
+The backend forwards the native Remote Build configuration bundle to Actions,
+so YAML files, packages, and local components do not need to be committed to
+GitHub. `secrets.yaml` is deliberately removed before dispatch; Actions uses
+the encrypted `ESPHOME_SECRETS_YAML` repository secret instead.
 
 ## GitHub setup
 
@@ -30,8 +31,8 @@ of the configuration tree (custom components, packages, and fonts).
 2. Put the real `secrets.yaml` contents in the repository Actions secret
    `ESPHOME_SECRETS_YAML`. If it is omitted, the workflow generates throw-away
    compile-only values; that firmware is not suitable for OTA or HA API use.
-3. If `config_repo` is private, add a read-only token for it as the Actions
-   secret `CONFIG_REPO_TOKEN`.
+3. No ESPHome configuration repository is required. An optional config
+   repository is only a fallback for unusually large bundles.
 
 The public workflow is `.github/workflows/build-one.yml`. It has no matrix of
 personal devices and can be called for any valid ESPHome YAML basename.
@@ -66,13 +67,11 @@ docker compose up -d --build
 GITHUB_TOKEN=github_pat_...
 GITHUB_REPOSITORY=OWNER/REPOSITORY
 GITHUB_WORKFLOW=build-one.yml
-GITHUB_CONFIG_REPOSITORY=OWNER/PRIVATE-ESPHome-CONFIG
-GITHUB_CONFIG_REF=master
+GITHUB_WORKFLOW_REF=master
 ```
 
 `GITHUB_WORKFLOW_REF` selects the branch of this wrapper repository that owns
-the workflow (normally `master`); `GITHUB_CONFIG_REF` selects the branch of
-the configuration repository.
+the workflow (normally `master`).
 
 On first start the container prints a one-time pairing key and fingerprint.
 In the main Dashboard open **Settings → Send builds → Pair with a build
@@ -82,15 +81,17 @@ and enter the key. The pairing identity is persisted in the volume.
 The backend only needs TCP `6056` from the Dashboard. Do not expose it to the
 Internet; the Remote Build protocol already authenticates the paired peer.
 
-## Configuration repository examples
+## Optional large-bundle fallback
 
-For a public config repository:
+Normal users do not need this. GitHub limits `workflow_dispatch` inputs; if a
+bundle contains large fonts/images and exceeds that limit, place those files
+in a configuration repository and set:
 
 ```dotenv
 GITHUB_CONFIG_REPOSITORY=OWNER/my-esphome-config
 ```
 
-For a private config repository, set `CONFIG_REPO_TOKEN` in the **wrapper
+For a private repository, set `CONFIG_REPO_TOKEN` in the **wrapper
 repository's** Actions secrets. The token is used only by Actions checkout;
 it is never included in the firmware artifact.
 
@@ -98,8 +99,8 @@ it is never included in the firmware artifact.
 
 - ESPHome and the Device Builder versions should match the Dashboard. The
   supplied image uses ESPHome `2026.7.4` and Device Builder `1.11.5`.
-- The workflow input limit bounds the size of the Dashboard YAML passed as
-  `config_b64`. Large trees should be kept in `config_repo`.
+- GitHub's workflow input limit bounds the compressed Remote Build bundle.
+  Large binary assets may need the optional `config_repo` fallback.
 - The wrapper deliberately delegates non-`compile` ESPHome commands to the
   original CLI. Receiver-side jobs are compile-only; OTA/install remains on
   the main Dashboard as required by ESPHome Remote Build.
