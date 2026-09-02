@@ -167,15 +167,16 @@ jobs:
           (out / 'build' / device).mkdir(parents=True, exist_ok=True)
           (out / 'idedata').mkdir(parents=True, exist_ok=True)
           (out / 'storage').mkdir(parents=True, exist_ok=True)
-          # PlatformIO may expose .pioenvs as a symlink. Walk links and stage
-          # the flash images flat so upload-artifact never drops them.
+          # PlatformIO may expose .pioenvs as a symlink. Walk links and copy
+          # real files while preserving the build-relative layout expected by
+          # Device Builder's per-platform BUILD_FILES contract.
           import os
           for parent, dirs, files in os.walk(build, followlinks=True):
               for name in files:
                   if not ((name.startswith('firmware') and name.endswith('.bin')) or name in {'bootloader.bin','partition-table.bin','ota_data_initial.bin'}):
                       continue
                   p = Path(parent) / name
-                  dest = out / 'build' / device / name
+                  dest = out / 'build' / device / p.relative_to(build)
                   dest.parent.mkdir(parents=True, exist_ok=True)
                   shutil.copy2(p, dest)
           idedata = root / 'idedata' / f'{device}.json'
@@ -195,7 +196,13 @@ jobs:
                   if str(p).startswith('/config/'):
                       p = Path(str(p)[len('/config/'):])
                   if p.exists() and p.suffix == '.bin':
-                      shutil.copy2(p, out / 'build' / device / p.name)
+                      try:
+                          relative = p.relative_to(build)
+                      except ValueError:
+                          relative = Path(p.name)
+                      dest = out / 'build' / device / relative
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(p, dest)
               (out / 'storage' / storage.name).write_text(json.dumps(data, indent=2) + '\n')
           validated = root / 'storage' / f'{device}.yaml.validated.yaml'
           if validated.exists():
