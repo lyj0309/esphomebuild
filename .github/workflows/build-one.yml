@@ -96,6 +96,23 @@ jobs:
               raise SystemExit(f'{device}.yaml was not supplied by bundle/config/repository')
           PY
 
+      - name: Compute build cache key
+        id: cache_key
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$({
+            find . -type f \
+              ! -path './.git/*' \
+              ! -path './.esphome/*' \
+              ! -path './.github-cache/*' \
+              ! -name 'secrets.yaml' \
+              -print0 \
+              | sort -z \
+              | xargs -0 -r sha256sum
+          } | sha256sum | cut -d' ' -f1)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Prepare secrets
         shell: bash
         run: |
@@ -116,24 +133,27 @@ jobs:
           PY
           fi
 
-      - name: Restore ESPHome build cache
+      - name: Restore shared PlatformIO toolchain cache
         uses: actions/cache@v4
         with:
-          path: |
-            .github-cache/esphome
-            .esphome/build/${{ inputs.device }}
-          key: esphome-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-${{ hashFiles('**/*.yaml', '**/*.yml', 'components/**') }}
+          path: .github-cache/platformio
+          key: esphome-platformio-2026.7.4-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Restore per-device incremental build cache
+        uses: actions/cache@v4
+        with:
+          path: .esphome/build/${{ inputs.device }}
+          key: esphome-build-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-${{ steps.cache_key.outputs.digest }}
           restore-keys: |
-            esphome-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-
-            esphome-2026.7.4-${{ runner.os }}-${{ runner.arch }}-
+            esphome-build-2026.7.4-${{ runner.os }}-${{ runner.arch }}-${{ inputs.device }}-
 
       - name: Compile
         run: |
           set -euo pipefail
-          mkdir -p .github-cache/esphome
+          mkdir -p .github-cache/platformio
           docker run --rm \
             -v "$PWD:/config" \
-            -v "$PWD/.github-cache/esphome:/cache" \
+            -v "$PWD/.github-cache/platformio:/root/.platformio" \
             ghcr.io/esphome/esphome:2026.7.4 \
             compile "/config/$DEVICE.yaml"
 
