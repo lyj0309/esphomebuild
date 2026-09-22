@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from build_crypto import encrypt, decrypt
 
 REAL = "/usr/local/bin/esphome-local"
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
@@ -162,8 +163,8 @@ def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
             shutil.copy2(validated, storage_dir / validated.name)
 
 
-def encode_config_bundle(config: Path) -> str:
-    """Pack the receiver-extracted Remote Build tree, excluding secrets."""
+def encode_config_bundle(config: Path, request_id: str) -> str:
+    """Encrypt the receiver-extracted tree, including actual build secrets."""
     root = config.parent
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
@@ -171,10 +172,10 @@ def encode_config_bundle(config: Path) -> str:
             relative = path.relative_to(root)
             if any(part in {".git", ".esphome", "__pycache__"} for part in relative.parts):
                 continue
-            if relative.name in {"secrets.yaml", "secrets.yml"}:
-                continue
+            if path.is_symlink():
+                raise RuntimeError("Symlinks are not supported in encrypted config bundles")
             archive.add(path, arcname=relative, recursive=False)
-    encoded = base64.b64encode(buffer.getvalue()).decode()
+    encoded = base64.b64encode(encrypt(buffer.getvalue(), config.stem, request_id, "input")).decode()
     # GitHub caps all workflow_dispatch inputs at 65,535 characters.
     if len(encoded) > 60_000:
         raise RuntimeError(
@@ -191,16 +192,13 @@ def remote_compile(config: Path) -> int:
     request_id = f"remote-{device}-{uuid.uuid4().hex[:12]}"
     ref = os.environ.get("GITHUB_CONFIG_REF", "master")
     config_repo = os.environ.get("GITHUB_CONFIG_REPOSITORY", "")
-    bundle_b64 = encode_config_bundle(config)
+    bundle_b64 = encode_config_bundle(config, request_id)
     print(f"INFO GitHub Actions build requested for {device} ({request_id})", flush=True)
     api("POST", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches", {
         "ref": os.environ.get("GITHUB_WORKFLOW_REF", "master"),
         "inputs": {
             "device": device,
-            "config_ref": ref,
-            "config_repo": config_repo,
-            "config_b64": "",
-            "bundle_b64": bundle_b64,
+            "bundle_encrypted": bundle_b64,
             "request_id": request_id,
         },
     })
@@ -243,19 +241,32 @@ def remote_compile(config: Path) -> int:
                         print(f"WARNING GitHub Actions log unavailable: {exc}", flush=True)
                 if run.get("conclusion") != "success":
                     print(f"ERROR GitHub Actions concluded {run.get('conclusion')}", flush=True)
-                    return 1
                 break
         time.sleep(5)
     if not run or run.get("status") != "completed":
         raise TimeoutError("timed out waiting for GitHub Actions")
     artifacts = api("GET", f"/repos/{REPO}/actions/runs/{run['id']}/artifacts").get("artifacts", [])
-    wanted = next((a for a in artifacts if a.get("name") == f"esphome-{device}"), None)
+    wanted = next((a for a in artifacts if a.get("name") == f"esphome-{device}-encrypted"), None)
     if not wanted:
         raise RuntimeError(f"firmware artifact not found for run {run['id']}")
     with tempfile.NamedTemporaryFile(prefix="esphome-gh-", suffix=".zip", delete=False) as out:
         archive = Path(out.name)
     try:
         download_artifact(wanted["archive_download_url"], archive)
+        with zipfile.ZipFile(archive) as zf:
+            envelope = zf.read("build.enc")
+        archive.write_bytes(decrypt(envelope, device, request_id, "output"))
+        with zipfile.ZipFile(archive) as zf:
+            result = json.loads(zf.read("result.json"))
+            log_dir = Path(os.environ.get("ESPHOME_DATA_DIR", ".esphome")) / "private-build-logs"
+            log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            log_path = log_dir / f"{request_id}.log"
+            with log_path.open("wb") as output:
+                os.chmod(log_path, 0o600)
+                output.write(zf.read("build.log"))
+            print(f"INFO Private compiler log saved to {log_path}", flush=True)
+            if not result.get("success") or run.get("conclusion") != "success":
+                return 1
         install_artifacts(device, archive, Path(os.environ.get("ESPHOME_DATA_DIR", ".esphome")))
     finally:
         archive.unlink(missing_ok=True)

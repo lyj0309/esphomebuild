@@ -1,233 +1,44 @@
 name: ESPHome Build One
-
 on:
   workflow_dispatch:
     inputs:
       device:
-        description: YAML basename without .yaml (for example living-room)
+        description: Device YAML basename
         required: true
         type: string
-      config_repo:
-        description: Optional repository containing the ESPHome tree
-        required: false
-        default: ''
-        type: string
-      config_ref:
-        description: Git ref in config_repo
-        required: false
-        default: master
-        type: string
-      config_b64:
-        description: Optional base64 YAML overlay sent by the Dashboard
-        required: false
-        default: ''
-        type: string
-      bundle_b64:
-        description: Base64 tar.gz Remote Build bundle (secrets excluded)
-        required: false
-        default: ''
+      bundle_encrypted:
+        description: AES-256-GCM authenticated configuration bundle
+        required: true
         type: string
       request_id:
-        description: Correlation id from the wrapper
-        required: false
-        default: manual
+        description: Unique build request identifier
+        required: true
         type: string
-
 run-name: ESPHome ${{ inputs.device }} (${{ inputs.request_id }})
-
 permissions:
   contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      DEVICE: ${{ inputs.device }}
-      ESPHOME_SECRETS_YAML: ${{ secrets.ESPHOME_SECRETS_YAML }}
+    timeout-minutes: 45
     steps:
-      - name: Check out optional configuration repository
-        if: ${{ inputs.config_repo != '' }}
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.config_repo }}
-          ref: ${{ inputs.config_ref }}
-          token: ${{ secrets.CONFIG_REPO_TOKEN || github.token }}
-          path: config-src
-
-      - name: Prepare configuration
-        shell: bash
+          persist-credentials: false
+      - name: Install encryption dependency
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import base64, io, json, os, shutil, tarfile
-          from pathlib import Path
-
-          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-          inputs = event.get('inputs', {})
-          device = inputs['device']
-          if not device or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in device):
-              raise SystemExit(f'invalid device name: {device!r}')
-          source = Path('config-src')
-          if source.exists():
-              for item in source.iterdir():
-                  if item.name == '.git':
-                      continue
-                  target = Path(item.name)
-                  if item.is_dir():
-                      shutil.copytree(item, target, dirs_exist_ok=True)
-                  else:
-                      shutil.copy2(item, target)
-
-          encoded_bundle = inputs.get('bundle_b64', '')
-          if encoded_bundle:
-              raw = base64.b64decode(encoded_bundle, validate=True)
-              with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as archive:
-                  root = Path.cwd().resolve()
-                  for member in archive.getmembers():
-                      target = (root / member.name).resolve()
-                      if not str(target).startswith(str(root) + os.sep):
-                          raise SystemExit(f'unsafe bundle path: {member.name}')
-                  archive.extractall('.', filter='data')
-
-          encoded_config = inputs.get('config_b64', '')
-          if encoded_config:
-              Path(f'{device}.yaml').write_bytes(base64.b64decode(encoded_config, validate=True))
-          if not Path(f'{device}.yaml').is_file():
-              raise SystemExit(f'{device}.yaml was not supplied by bundle/config/repository')
-          PY
-
-      - name: Compute build cache key
-        id: cache_key
-        shell: bash
-        run: |
-          set -euo pipefail
-          digest="$({
-            find . -type f \
-              ! -path './.git/*' \
-              ! -path './.esphome/*' \
-              ! -path './.github-cache/*' \
-              ! -name 'secrets.yaml' \
-              -print0 \
-              | sort -z \
-              | xargs -0 -r sha256sum
-          } | sha256sum | cut -d' ' -f1)"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -n "${ESPHOME_SECRETS_YAML:-}" ]]; then
-            printf '%s\n' "$ESPHOME_SECRETS_YAML" > secrets.yaml
-          else
-            python3 - <<'PY'
-          import base64, re, secrets
-          from pathlib import Path
-          names = set()
-          for path in Path('.').rglob('*.yaml'):
-              names.update(re.findall(r'!secret\s+([A-Za-z0-9_]+)', path.read_text()))
-          with Path('secrets.yaml').open('w') as out:
-              for name in sorted(names):
-                  value = base64.b64encode(secrets.token_bytes(32)).decode() if name.endswith('_api_key') else 'ci-build-only-' + secrets.token_hex(8)
-                  out.write(f'{name}: "{value}"\n')
-          PY
-          fi
-
-      - name: Restore shared ESPHome cache
-        uses: actions/cache@v4
-        with:
-          path: .github-cache/esphome
-          key: esphome-cache-v2-2026.8.2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache_key.outputs.digest }}
-          restore-keys: |
-            esphome-cache-v2-2026.8.2-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Compile
-        run: |
-          set -euo pipefail
-          mkdir -p .github-cache/esphome
-          docker run --rm \
-            -v "$PWD:/config" \
-            -v "$PWD/.github-cache/esphome:/cache" \
-            -e PLATFORMIO_BUILD_CACHE_DIR=/cache/platformio/build-cache \
-            ghcr.io/esphome/esphome:2026.8.2 \
-            compile "/config/$DEVICE.yaml"
-          sudo chmod -R a+rX .github-cache/esphome
-
-      - name: Stage firmware artifact
-        run: |
-          set -euo pipefail
-          sudo chmod -R a+rX .esphome
-          python3 - <<'PY'
-          import json, shutil
-          from pathlib import Path
-          device = "${{ inputs.device }}"
-          root = Path('.esphome')
-          build = root / 'build' / device
-          out = Path('artifact')
-          (out / 'build' / device).mkdir(parents=True, exist_ok=True)
-          (out / 'idedata').mkdir(parents=True, exist_ok=True)
-          (out / 'storage').mkdir(parents=True, exist_ok=True)
-          # PlatformIO may expose .pioenvs as a symlink. Walk links and copy
-          # real files while preserving the build-relative layout expected by
-          # Device Builder's per-platform BUILD_FILES contract.
-          import os
-          for parent, dirs, files in os.walk(build, followlinks=True):
-              for name in files:
-                  if not ((name.startswith('firmware') and name.endswith('.bin')) or name in {'bootloader.bin','partition-table.bin','ota_data_initial.bin'}):
-                      continue
-                  p = Path(parent) / name
-                  dest = out / 'build' / device / p.relative_to(build)
-                  dest.parent.mkdir(parents=True, exist_ok=True)
-                  shutil.copy2(p, dest)
-          idedata = root / 'idedata' / f'{device}.json'
-          if not idedata.exists():
-              idedata = next(build.rglob('idedata.json'), None)
-          if idedata:
-              shutil.copy2(idedata, out / 'idedata' / f'{device}.json')
-          platformio = build / 'platformio.ini'
-          if platformio.exists():
-              shutil.copy2(platformio, out / 'build' / device / 'platformio.ini')
-          build_info = build / 'build_info.json'
-          if build_info.exists():
-              shutil.copy2(build_info, out / 'build' / device / 'build_info.json')
-          storage = root / 'storage' / f'{device}.yaml.json'
-          if storage.exists():
-              data = json.loads(storage.read_text())
-              fw = data.get('firmware_bin_path')
-              if fw:
-                  p = Path(fw)
-                  if str(p).startswith('/config/'):
-                      p = Path(str(p)[len('/config/'):])
-                  if p.exists() and p.suffix == '.bin':
-                      try:
-                          relative = p.relative_to(build)
-                      except ValueError:
-                          relative = Path(p.name)
-                      dest = out / 'build' / device / relative
-                      dest.parent.mkdir(parents=True, exist_ok=True)
-                      shutil.copy2(p, dest)
-              (out / 'storage' / storage.name).write_text(json.dumps(data, indent=2) + '\n')
-          validated = root / 'storage' / f'{device}.yaml.validated.yaml'
-          if validated.exists():
-              shutil.copy2(validated, out / 'storage' / validated.name)
-          if not any((out / 'build' / device).rglob('*.bin')):
-              raise SystemExit('no firmware images found')
-          if not (out / 'idedata' / f'{device}.json').exists():
-              raise SystemExit('idedata.json not found')
-          if not (out / 'storage' / f'{device}.yaml.json').exists():
-              raise SystemExit('StorageJSON not found')
-          if not (out / 'build' / device / 'build_info.json').exists():
-              raise SystemExit('build_info.json not found')
-          PY
-
-      - name: Upload firmware artifact
+          python3 -m venv "$RUNNER_TEMP/build-crypto"
+          "$RUNNER_TEMP/build-crypto/bin/pip" install cryptography==46.0.3
+      - name: Compile encrypted configuration
+        env:
+          ESPHOME_BUILD_KEY: ${{ secrets.ESPHOME_BUILD_KEY }}
+          ESPHOME_SECRETS_YAML: ${{ secrets.ESPHOME_SECRETS_YAML }}
+        run: '"$RUNNER_TEMP/build-crypto/bin/python" secure_runner.py'
+      - name: Upload encrypted firmware and diagnostics
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: esphome-${{ inputs.device }}
-          path: artifact
+          name: esphome-${{ inputs.device }}-encrypted
+          path: ${{ runner.temp }}/encrypted-output/build.enc
           if-no-files-found: error
-          retention-days: 30
-          # PlatformIO stores ESP8266 firmware under .pioenvs/. The artifact
-          # tree is already allow-listed above, so hidden build directories
-          # are both required and safe to include.
-          include-hidden-files: true
+          retention-days: 7

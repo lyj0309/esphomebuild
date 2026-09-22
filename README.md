@@ -160,3 +160,21 @@ it is never included in the firmware artifact.
   the complete job log (runner setup, cache, compile, staging, upload, and
   cleanup) in the Dashboard. It does not rely on an undocumented live-log
   stream, and secrets masked by GitHub remain masked in the replay.
+# Encrypted build transport
+
+Builds now require an AES-256-GCM encrypted configuration bundle. Plaintext and
+base64-only dispatch inputs are rejected. Create a random 32-byte key, encode it
+as base64, and provision the same value as the repository Actions secret
+`ESPHOME_BUILD_KEY` and the receiver file
+`/var/lib/esphome-builder/build-encryption.key` (mode 0600). Do not commit the key.
+`ESPHOME_BUILD_KEY_FILE` can override the receiver path.
+
+The receiver encrypts each bundle with a fresh nonce and authenticates its device,
+request ID, and direction. The runner uses the real bundled secrets, or the
+existing `ESPHOME_SECRETS_YAML` repository secret; it never fabricates credentials.
+Only `build.enc` is published. It contains firmware, metadata and private compiler
+logs, all encrypted. The receiver verifies/decrypts the result before installation.
+Compiler logs are stored locally in `private-build-logs` with mode 0600. Build
+caches are not uploaded. GitHub-hosted runners necessarily see plaintext during
+compilation; this protects public inputs/artifacts, not against GitHub or authorized
+workflow editors. Historical artifacts/logs/caches are not retroactively encrypted.
