@@ -1,2 +1,6 @@
 backend.env
 *.log
+__pycache__/
+*.key
+.env
+data/
