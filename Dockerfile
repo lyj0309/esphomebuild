@@ -4,6 +4,7 @@ RUN mv /usr/local/bin/esphome /usr/local/bin/esphome-local
 
 COPY esphome-wrapper.py /usr/local/bin/esphome
 COPY build_crypto.py /usr/local/bin/build_crypto.py
+COPY build_cache.py /usr/local/bin/build_cache.py
 RUN chmod 0755 /usr/local/bin/esphome
 
 ENTRYPOINT ["esphome-device-builder"]

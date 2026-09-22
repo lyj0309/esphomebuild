@@ -162,6 +162,16 @@ it is never included in the firmware artifact.
   stream, and secrets masked by GitHub remain masked in the replay.
 # Encrypted build transport
 
+Identical local configuration snapshots reuse an authenticated, encrypted firmware
+cache under `/var/lib/esphome-builder/encrypted-build-cache`. The cache key covers
+all bundled source and secrets contents and the GitHub build workflow/runner code;
+archive timestamps and temporary extraction paths do not affect it. Cache hits
+restore artifacts and metadata without dispatching a GitHub build. Concurrent
+identical requests are serialized. Failed/corrupted results are not reused.
+Mutable remote packages/components and custom PlatformIO dependency settings
+conservatively bypass the cache. Set `ESPHOME_FORCE_REBUILD=1` on the receiver to
+request a fresh build. `ESPHOME_BUILD_CACHE_DIR` overrides the persistent cache path.
+
 Builds now require an AES-256-GCM encrypted configuration bundle. Plaintext and
 base64-only dispatch inputs are rejected. Create a random 32-byte key, encode it
 as base64, and provision the same value as the repository Actions secret

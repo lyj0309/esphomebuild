@@ -14,10 +14,13 @@ import tarfile
 import io
 import uuid
 import zipfile
+import hashlib
+import fcntl
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from build_crypto import encrypt, decrypt
+import build_cache
 
 REAL = "/usr/local/bin/esphome-local"
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
@@ -163,8 +166,8 @@ def install_artifacts(device: str, archive: Path, data_dir: Path) -> None:
             shutil.copy2(validated, storage_dir / validated.name)
 
 
-def encode_config_bundle(config: Path, request_id: str) -> str:
-    """Encrypt the receiver-extracted tree, including actual build secrets."""
+def pack_config_bundle(config: Path) -> bytes:
+    """Snapshot actual source files, including secrets, once per build request."""
     root = config.parent
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
@@ -175,7 +178,11 @@ def encode_config_bundle(config: Path, request_id: str) -> str:
             if path.is_symlink():
                 raise RuntimeError("Symlinks are not supported in encrypted config bundles")
             archive.add(path, arcname=relative, recursive=False)
-    encoded = base64.b64encode(encrypt(buffer.getvalue(), config.stem, request_id, "input")).decode()
+    return buffer.getvalue()
+
+
+def encode_config_bundle(config: Path, request_id: str, bundle: bytes) -> str:
+    encoded = base64.b64encode(encrypt(bundle, config.stem, request_id, "input")).decode()
     # GitHub caps all workflow_dispatch inputs at 65,535 characters.
     if len(encoded) > 60_000:
         raise RuntimeError(
@@ -186,13 +193,60 @@ def encode_config_bundle(config: Path, request_id: str) -> str:
 
 
 def remote_compile(config: Path) -> int:
+    """Serialize identical builds and restore a verified encrypted artifact on a hit."""
+    device = config.stem
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", device):
+        raise RuntimeError("Invalid device name")
+    bundle = pack_config_bundle(config)
+    revision = api("GET", f"/repos/{REPO}/commits/{os.environ.get('GITHUB_WORKFLOW_REF', 'master')}")["sha"]
+    recipe = hashlib.sha256()
+    for name in (f".github/workflows/{WORKFLOW}", "secure_runner.py", "build_crypto.py"):
+        content = api("GET", f"/repos/{REPO}/contents/{name}?ref={revision}")
+        recipe.update(name.encode() + b"\0" + base64.b64decode(content["content"]))
+    digest = build_cache.fingerprint(bundle, recipe.hexdigest(), device)
+    cache_root = Path(os.environ.get("ESPHOME_BUILD_CACHE_DIR", "/var/lib/esphome-builder/encrypted-build-cache"))
+    cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cache_path = cache_root / f"{device}-{digest}.enc"
+    # Mutable remote packages/components are not part of the uploaded snapshot.
+    # Conservatively rebuild them until dependency revision resolution is supported.
+    from esphome.yaml_util import load_yaml
+    yaml = load_yaml(config)
+    local_only = not yaml.get("packages") and not yaml.get("esphome", {}).get("libraries")
+    local_only = local_only and not yaml.get("esphome", {}).get("platformio_options")
+    # A repository Secret can change without changing the workflow revision.
+    # Cache only when actual credentials are part of the hashed snapshot.
+    local_only = local_only and (config.parent / "secrets.yaml").is_file()
+    framework = yaml.get("esp32", {}).get("framework", {})
+    local_only = local_only and not framework.get("source") and not framework.get("components")
+    for component in yaml.get("external_components", []):
+        source = component.get("source") if isinstance(component, dict) else None
+        if not isinstance(source, dict) or source.get("type") != "local":
+            local_only = False
+    use_cache = local_only and os.environ.get("ESPHOME_FORCE_REBUILD") != "1"
+    with (cache_root / f"{device}-{digest}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if use_cache and cache_path.exists():
+            try:
+                data = build_cache.load(cache_path, device, digest)
+            except Exception as exc:
+                print(f"WARNING Build cache verification failed ({type(exc).__name__}); rebuilding", flush=True)
+            else:
+                with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    install_artifacts(device, Path(tmp.name), Path(os.environ.get("ESPHOME_DATA_DIR", ".esphome")))
+                print("INFO Build cache HIT: configuration and build recipe unchanged; verified firmware reused, GitHub compile skipped", flush=True)
+                return 0
+        print("INFO Build cache MISS" if use_cache else "INFO Build cache bypassed: forced rebuild or remote dependencies", flush=True)
+        return build_on_github(config, bundle, revision, cache_path if local_only else None, digest)
+
+
+def build_on_github(config: Path, bundle: bytes, revision: str, cache_path, digest: str) -> int:
     device = config.stem
     if not device or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in device):
         raise RuntimeError(f"invalid device name: {device!r}")
     request_id = f"remote-{device}-{uuid.uuid4().hex[:12]}"
-    ref = os.environ.get("GITHUB_CONFIG_REF", "master")
-    config_repo = os.environ.get("GITHUB_CONFIG_REPOSITORY", "")
-    bundle_b64 = encode_config_bundle(config, request_id)
+    bundle_b64 = encode_config_bundle(config, request_id, bundle)
     print(f"INFO GitHub Actions build requested for {device} ({request_id})", flush=True)
     api("POST", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches", {
         "ref": os.environ.get("GITHUB_WORKFLOW_REF", "master"),
@@ -268,6 +322,8 @@ def remote_compile(config: Path) -> int:
             if not result.get("success") or run.get("conclusion") != "success":
                 return 1
         install_artifacts(device, archive, Path(os.environ.get("ESPHOME_DATA_DIR", ".esphome")))
+        if cache_path is not None and run.get("head_sha") == revision:
+            build_cache.save(cache_path, archive.read_bytes(), device, digest)
     finally:
         archive.unlink(missing_ok=True)
     print("INFO GitHub Actions artifacts installed", flush=True)
